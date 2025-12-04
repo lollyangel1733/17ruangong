@@ -1,0 +1,37 @@
+white_balance:
+  enabled: true
+
+illumination:
+  clahe:
+    enabled: true
+    clipLimit: 2.5
+    tileGridSize: 8
+  retinex:
+    enabled: false
+    scales: [15, 80, 250]
+
+de_reflection:
+  enabled: true
+  v_thresh: 220
+  s_thresh: 50
+  mode: dim        # dim | inpaint
+  dim_ratio: 0.85
+  inpaint_radius: 3
+
+bilateral:
+  enabled: true
+  d: 9
+  sigmaColor: 75
+  sigmaSpace: 75
+
+nlm:
+  enabled: false
+  h: 7
+  hColor: 7
+  templateWindowSize: 7
+  searchWindowSize: 21
+
+background:
+  method: sat_otsu     # none | sat_otsu | sat_thresh
+  sat_thresh: 50
+  strength: 0.5

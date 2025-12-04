@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>锈蚀检测系统</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #111827;
+            --accent: #3b82f6;
+            --text: #e5e7eb;
+            --muted: #9ca3af;
+            --success: #22c55e;
+            --danger: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif; }
+        header { padding: 20px; display: flex; align-items: center; justify-content: space-between; background: rgba(17,24,39,0.8); border-bottom: 1px solid #1f2937; position: sticky; top: 0; z-index: 10; }
+        header h1 { margin: 0; font-size: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
+        .panel { background: var(--panel); border: 1px solid #1f2937; border-radius: 12px; overflow: hidden; }
+        .panel header { background: #0b1220; border-bottom: 1px solid #1f2937; }
+        .panel header h2 { font-size: 16px; }
+        .panel-content { padding: 16px; }
+        .preview { width: 100%; height: 560px; background: #0b1220; border-radius: 8px; border: 1px solid #1f2937; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+        .preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+        #placeholder { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted); font-size: 14px; opacity: 0.85; text-align: center; }
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .controls .row { display: flex; gap: 12px; align-items: center; }
+        .controls label { font-size: 13px; color: var(--muted); }
+        .controls input[type="number"], .controls select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #374151; background: #0b1220; color: var(--text); }
+        .file-input { display: flex; align-items: center; gap: 12px; }
+        .file-input input[type="file"] { display: none; }
+        .btn { background: var(--accent); color: white; border: none; border-radius: 10px; padding: 10px 14px; font-weight: 600; cursor: pointer; transition: transform .05s ease, opacity .2s ease; }
+        .btn:active { transform: translateY(1px); }
+        .btn-secondary { background: #374151; }
+        .btn-danger { background: var(--danger); }
+        .btn-success { background: var(--success); }
+        .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .metric { background: #0b1220; border: 1px solid #1f2937; border-radius: 8px; padding: 12px; }
+        .metric .label { color: var(--muted); font-size: 12px; }
+        .metric .value { font-size: 18px; font-weight: 700; margin-top: 6px; }
+        .progress { height: 10px; background: #0b1220; border-radius: 999px; border: 1px solid #1f2937; overflow: hidden; }
+        .progress .bar { height: 100%; width: 0%; background: var(--accent); transition: width .2s ease; }
+        footer { padding: 20px; color: var(--muted); font-size: 12px; }
+        .thumbs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 12px; }
+        .thumbs img { width: 100%; height: 100px; object-fit: cover; border-radius: 6px; border: 1px solid #1f2937; cursor: pointer; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>锈蚀检测系统 · Web UI</h1>
+    <div>
+        <button class="btn btn-secondary" onclick="location.href='http://127.0.0.1:6006/'" title="打开TensorBoard">打开TensorBoard</button>
+    </div>
+</header>
+<div class="container">
+    <div class="grid">
+        <div class="panel">
+            <header><h2>图像显示区域</h2></header>
+            <div class="panel-content">
+                <div class="preview" id="preview">
+                    <div id="previewContent" style="display:none; gap:12px; width:100%; height:100%; align-items:center; justify-content:center;">
+                        <div style="flex:1; height:100%; display:flex; flex-direction:column;">
+                            <div style="color: var(--muted); font-size:12px; margin-bottom:4px;">输入图</div>
+                            <img id="inputImg" style="width:100%; height:100%; object-fit:contain; display:none;" alt="输入图" />
+                        </div>
+                        <div style="flex:1; height:100%; display:flex; flex-direction:column;">
+                            <div style="color: var(--muted); font-size:12px; margin-bottom:4px;">输出（标注）</div>
+                            <img id="resultImg" style="width:100%; height:100%; object-fit:contain; display:none;" alt="检测结果图" />
+                        </div>
+                    </div>
+                    <span id="placeholder">选择图像并点击“开始检测”以查看结果</span>
+                </div>
+                <div class="thumbs" id="thumbs"></div>
+            </div>
+        </div>
+        <div class="panel">
+            <header><h2>控制与设置</h2></header>
+            <div class="panel-content">
+                <div class="file-input">
+                    <label class="btn" for="fileInput">选择图像</label>
+                    <input id="fileInput" type="file" multiple accept="image/*" />
+                    <button class="btn btn-danger" id="clearBtn">清空</button>
+                </div>
+                <div class="controls" style="margin-top: 12px;">
+                    <div class="row">
+                        <label>模型</label>
+                        <select id="model">
+                            <!-- 由脚本动态填充，默认包含基础模型与发现的best.pt -->
+                        </select>
+                    </div>
+                    <div class="row">
+                        <label>置信度 conf</label>
+                        <input id="conf" type="number" value="0.25" min="0" max="1" step="0.01" />
+                    </div>
+                    <div class="row">
+                        <label>IoU 阈值</label>
+                        <input id="iou" type="number" value="0.45" min="0" max="1" step="0.01" />
+                    </div>
+                    <div class="row">
+                        <label>图像尺寸 imgsz</label>
+                        <input id="imgsz" type="number" value="640" min="320" max="1536" step="32" />
+                    </div>
+                    <div class="row">
+                        <label>最大检测数 max_det</label>
+                        <input id="max_det" type="number" value="300" min="1" max="1000" step="1" />
+                    </div>
+                </div>
+                <div style="margin-top: 16px; display:flex; gap:12px;">
+                    <button class="btn btn-success" id="startBtn">开始检测</button>
+                </div>
+                <div style="margin-top: 16px;">
+                    <div class="progress"><div class="bar" id="progressBar"></div></div>
+                    <div id="progressText" style="margin-top:8px; color: var(--muted);">未开始</div>
+                </div>
+                <div style="margin-top: 16px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 14px;">结果展示面板</h3>
+                    <div class="metrics">
+                        <div class="metric"><div class="label">检测数量</div><div class="value" id="mCount">-</div></div>
+                        <div class="metric"><div class="label">面积比例</div><div class="value" id="mArea">-</div></div>
+                        <div class="metric"><div class="label">平均置信度</div><div class="value" id="mConf">-</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<footer class="container">© 2025 锈蚀检测系统 · 提供清晰的用户反馈与可视化结果</footer>
+<script>
+    const fileInput = document.getElementById('fileInput');
+    const startBtn = document.getElementById('startBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const progressBar = document.getElementById('progressBar');
+    const progressText = document.getElementById('progressText');
+    const resultImg = document.getElementById('resultImg');
+    const inputImg = document.getElementById('inputImg');
+    const previewContent = document.getElementById('previewContent');
+    const placeholder = document.getElementById('placeholder');
+    const thumbs = document.getElementById('thumbs');
+
+    const mCount = document.getElementById('mCount');
+    const mArea = document.getElementById('mArea');
+    const mConf = document.getElementById('mConf');
+    const modelSelect = document.getElementById('model');
+
+    // 页面加载时拉取模型列表
+    async function loadModels() {
+        try {
+            const resp = await fetch('/models');
+            const data = await resp.json();
+            if (!data.success) throw new Error('无法加载模型列表');
+            modelSelect.innerHTML = '';
+            let bestKey = null;
+            for (const m of data.models) {
+                const opt = document.createElement('option');
+                opt.value = m.key;
+                opt.textContent = m.name;
+                modelSelect.appendChild(opt);
+                if (!bestKey && (m.key.endsWith('best.pt') || /最佳权重/.test(m.name))) bestKey = m.key;
+            }
+            if (bestKey) modelSelect.value = bestKey;
+            if (modelSelect.options.length === 0) {
+                const s = document.createElement('option'); s.value = 'yolo11s.pt'; s.textContent = 'yolo11s.pt (基础模型)';
+                const n = document.createElement('option'); n.value = 'yolo11n.pt'; n.textContent = 'yolo11n.pt (基础模型)';
+                modelSelect.appendChild(s); modelSelect.appendChild(n);
+            }
+        } catch (e) {
+            console.warn('加载模型列表失败，将使用默认基础模型', e);
+            if (modelSelect.options.length === 0) {
+                const s = document.createElement('option'); s.value = 'yolo11s.pt'; s.textContent = 'yolo11s.pt (基础模型)';
+                const n = document.createElement('option'); n.value = 'yolo11n.pt'; n.textContent = 'yolo11n.pt (基础模型)';
+                modelSelect.appendChild(s); modelSelect.appendChild(n);
+            }
+        }
+    }
+
+    function resetUI() {
+        progressBar.style.width = '0%';
+        progressText.textContent = '未开始';
+        resultImg.style.display = 'none';
+        inputImg.style.display = 'none';
+        previewContent.style.display = 'none';
+        placeholder.style.display = 'block';
+        thumbs.innerHTML = '';
+        mCount.textContent = '-';
+        mArea.textContent = '-';
+        mConf.textContent = '-';
+    }
+
+    clearBtn.addEventListener('click', () => {
+        fileInput.value = '';
+        resetUI();
+    });
+
+    document.addEventListener('DOMContentLoaded', loadModels);
+
+    // 选择文件后，立刻在左侧输入区显示第一张
+    fileInput.addEventListener('change', () => {
+        const files = fileInput.files;
+        if (files && files.length > 0) {
+            const url = URL.createObjectURL(files[0]);
+            inputImg.src = url;
+            inputImg.style.display = 'block';
+            previewContent.style.display = 'flex';
+            placeholder.style.display = 'none';
+        } else {
+            inputImg.style.display = 'none';
+            resultImg.style.display = 'none';
+            previewContent.style.display = 'none';
+            placeholder.style.display = 'block';
+        }
+    });
+
+    startBtn.addEventListener('click', async () => {
+        const files = fileInput.files;
+        if (!files || files.length === 0) {
+            alert('请先选择要检测的图像');
+            return;
+        }
+        const total = files.length;
+        let done = 0;
+        progressText.textContent = `开始检测（共 ${total} 张）...`;
+
+        for (const file of files) {
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('model', modelSelect.value);
+            formData.append('conf', document.getElementById('conf').value);
+            formData.append('iou', document.getElementById('iou').value);
+            formData.append('imgsz', document.getElementById('imgsz').value);
+            formData.append('max_det', document.getElementById('max_det').value);
+
+            // 在左侧展示当前输入图（逐张）
+            const inputUrl = URL.createObjectURL(file);
+            inputImg.src = inputUrl;
+            inputImg.style.display = 'block';
+            previewContent.style.display = 'flex';
+            placeholder.style.display = 'none';
+
+            try {
+                const resp = await fetch('/detect', { method: 'POST', body: formData });
+                const data = await resp.json();
+                if (!data.success) throw new Error(data.message || '检测失败');
+
+                // 展示输出图
+                const outputSrc = 'data:image/png;base64,' + data.image_base64;
+                resultImg.src = outputSrc;
+                resultImg.style.display = 'block';
+
+                // 更新指标
+                mCount.textContent = String(data.metrics['检测数量']);
+                mArea.textContent = (data.metrics['面积比例'] * 100).toFixed(2) + '%';
+                mConf.textContent = data.metrics['平均置信度'].toFixed(3);
+
+                // 添加缩略图（包含输入与输出的联动）
+                const thumb = document.createElement('img');
+                thumb.src = outputSrc; // 缩略图显示输出图
+                thumb.title = data.filename;
+                thumb.dataset.inputUrl = inputUrl; // 记录对应的输入图URL
+                // 记录本次检测的指标与参数，便于点击历史缩略图时还原
+                try {
+                    thumb.dataset.metrics = JSON.stringify(data.metrics || {});
+                    thumb.dataset.params = JSON.stringify(data.params || {});
+                } catch (e) {
+                    // 忽略序列化问题，不影响基本展示
+                }
+                thumb.addEventListener('click', () => {
+                    // 点击历史缩略图时，同时更新输入与输出
+                    inputImg.src = thumb.dataset.inputUrl;
+                    inputImg.style.display = 'block';
+                    resultImg.src = thumb.src;
+                    resultImg.style.display = 'block';
+                    previewContent.style.display = 'flex';
+                    placeholder.style.display = 'none';
+
+                    // 恢复对应的结果指标
+                    try {
+                        const metrics = thumb.dataset.metrics ? JSON.parse(thumb.dataset.metrics) : null;
+                        if (metrics) {
+                            const count = Number(metrics['检测数量'] ?? metrics.count ?? '-');
+                            const area = Number(metrics['面积比例'] ?? metrics.area_ratio ?? 0);
+                            const conf = Number(metrics['平均置信度'] ?? metrics.avg_conf ?? 0);
+                            mCount.textContent = isNaN(count) ? '-' : String(count);
+                            mArea.textContent = isNaN(area) ? '-' : (area * 100).toFixed(2) + '%';
+                            mConf.textContent = isNaN(conf) ? '-' : conf.toFixed(3);
+                        }
+                    } catch (e) { /* 忽略并继续 */ }
+
+                    // 恢复当时的检测参数到控制区（便于复现实验）
+                    try {
+                        const params = thumb.dataset.params ? JSON.parse(thumb.dataset.params) : null;
+                        if (params) {
+                            if (params.model && typeof params.model === 'string') {
+                                // 若模型选项存在该值则选中，否则保持当前
+                                for (let i = 0; i < modelSelect.options.length; i++) {
+                                    if (modelSelect.options[i].value === params.model) {
+                                        modelSelect.value = params.model;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (typeof params.conf !== 'undefined') document.getElementById('conf').value = params.conf;
+                            if (typeof params.iou !== 'undefined') document.getElementById('iou').value = params.iou;
+                            if (typeof params.imgsz !== 'undefined') document.getElementById('imgsz').value = params.imgsz;
+                            if (typeof params.max_det !== 'undefined') document.getElementById('max_det').value = params.max_det;
+                        }
+                    } catch (e) { /* 忽略并继续 */ }
+                });
+                thumbs.appendChild(thumb);
+
+            } catch (err) {
+                console.error(err);
+                alert('检测失败：' + err.message);
+            }
+
+            done += 1;
+            const percent = Math.round(done / total * 100);
+            progressBar.style.width = percent + '%';
+            progressText.textContent = `已完成 ${done}/${total}（${percent}%）`;
+        }
+
+        if (done === total) {
+            progressText.textContent = `检测完成，共 ${total} 张。`;
+        }
+    });
+</script>
+</body>
+</html>

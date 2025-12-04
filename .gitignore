@@ -1,0 +1,39 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# IDE/OS
+.idea/
+.vscode/
+.DS_Store
+
+# Virtual environments
+venv/
+.venv/
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Project artifacts and outputs (avoid committing generated files)
+web_data/outputs/
+web_data/uploads/
+web_data/results.csv
+
+# Datasets (keep configs/labels, ignore large image folders)
+datasets/
+datasets_preprocessed/
+datasets_preprocessed_v2/
+datasets_noRust/
+
+# Training outputs (Ultralytics runs) — keep only best.pt so frontend can load
+# Ignore all under runs
+runs/**/*
+# Re-include weights folders and best.pt files
+!runs/**/weights/
+!runs/**/weights/best.pt
+
+# Environment variables / secrets
+.env
+*.env
