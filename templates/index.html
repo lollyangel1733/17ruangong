@@ -222,18 +222,88 @@
         }
         const total = files.length;
         let done = 0;
-        progressText.textContent = `开始检测（共 ${total} 张）...`;
+        progressText.textContent = `开始检测（共 ${total} 张），已入队...`;
 
-        for (const file of files) {
+        const params = {
+            model: modelSelect.value,
+            conf: document.getElementById('conf').value,
+            iou: document.getElementById('iou').value,
+            imgsz: document.getElementById('imgsz').value,
+            max_det: document.getElementById('max_det').value,
+        };
+
+        function updateProgress() {
+            const percent = Math.round(done / total * 100);
+            progressBar.style.width = percent + '%';
+            progressText.textContent = `已完成 ${done}/${total}（${percent}%）`;
+            if (done === total) {
+                progressText.textContent = `检测完成，共 ${total} 张。`;
+            }
+        }
+
+        function attachThumb(outputSrc, inputUrl, data) {
+            resultImg.src = outputSrc;
+            resultImg.style.display = 'block';
+            inputImg.src = inputUrl;
+            inputImg.style.display = 'block';
+            previewContent.style.display = 'flex';
+            placeholder.style.display = 'none';
+
+            mCount.textContent = String(data.metrics['检测数量']);
+            mArea.textContent = (data.metrics['面积比例'] * 100).toFixed(2) + '%';
+            mConf.textContent = data.metrics['平均置信度'].toFixed(3);
+
+            const thumb = document.createElement('img');
+            thumb.src = outputSrc;
+            thumb.title = data.filename;
+            thumb.dataset.inputUrl = inputUrl;
+            try {
+                thumb.dataset.metrics = JSON.stringify(data.metrics || {});
+                thumb.dataset.params = JSON.stringify(data.params || {});
+            } catch (e) {}
+            thumb.addEventListener('click', () => {
+                inputImg.src = thumb.dataset.inputUrl;
+                inputImg.style.display = 'block';
+                resultImg.src = thumb.src;
+                resultImg.style.display = 'block';
+                previewContent.style.display = 'flex';
+                placeholder.style.display = 'none';
+                try {
+                    const metrics = thumb.dataset.metrics ? JSON.parse(thumb.dataset.metrics) : null;
+                    if (metrics) {
+                        const count = Number(metrics['检测数量'] ?? metrics.count ?? '-');
+                        const area = Number(metrics['面积比例'] ?? metrics.area_ratio ?? 0);
+                        const conf = Number(metrics['平均置信度'] ?? metrics.avg_conf ?? 0);
+                        mCount.textContent = isNaN(count) ? '-' : String(count);
+                        mArea.textContent = isNaN(area) ? '-' : (area * 100).toFixed(2) + '%';
+                        mConf.textContent = isNaN(conf) ? '-' : conf.toFixed(3);
+                    }
+                } catch (e) {}
+                try {
+                    const p = thumb.dataset.params ? JSON.parse(thumb.dataset.params) : null;
+                    if (p) {
+                        for (let i = 0; i < modelSelect.options.length; i++) {
+                            if (modelSelect.options[i].value === p.model) { modelSelect.value = p.model; break; }
+                        }
+                        if (typeof p.conf !== 'undefined') document.getElementById('conf').value = p.conf;
+                        if (typeof p.iou !== 'undefined') document.getElementById('iou').value = p.iou;
+                        if (typeof p.imgsz !== 'undefined') document.getElementById('imgsz').value = p.imgsz;
+                        if (typeof p.max_det !== 'undefined') document.getElementById('max_det').value = p.max_det;
+                    }
+                } catch (e) {}
+            });
+            thumbs.appendChild(thumb);
+        }
+
+        async function enqueueAndPoll(file) {
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('model', modelSelect.value);
-            formData.append('conf', document.getElementById('conf').value);
-            formData.append('iou', document.getElementById('iou').value);
-            formData.append('imgsz', document.getElementById('imgsz').value);
-            formData.append('max_det', document.getElementById('max_det').value);
+            formData.append('model', params.model);
+            formData.append('conf', params.conf);
+            formData.append('iou', params.iou);
+            formData.append('imgsz', params.imgsz);
+            formData.append('max_det', params.max_det);
 
-            // 在左侧展示当前输入图（逐张）
             const inputUrl = URL.createObjectURL(file);
             inputImg.src = inputUrl;
             inputImg.style.display = 'block';
@@ -241,90 +311,53 @@
             placeholder.style.display = 'none';
 
             try {
-                const resp = await fetch('/detect', { method: 'POST', body: formData });
-                const data = await resp.json();
-                if (!data.success) throw new Error(data.message || '检测失败');
-
-                // 展示输出图
-                const outputSrc = 'data:image/png;base64,' + data.image_base64;
-                resultImg.src = outputSrc;
-                resultImg.style.display = 'block';
-
-                // 更新指标
-                mCount.textContent = String(data.metrics['检测数量']);
-                mArea.textContent = (data.metrics['面积比例'] * 100).toFixed(2) + '%';
-                mConf.textContent = data.metrics['平均置信度'].toFixed(3);
-
-                // 添加缩略图（包含输入与输出的联动）
-                const thumb = document.createElement('img');
-                thumb.src = outputSrc; // 缩略图显示输出图
-                thumb.title = data.filename;
-                thumb.dataset.inputUrl = inputUrl; // 记录对应的输入图URL
-                // 记录本次检测的指标与参数，便于点击历史缩略图时还原
-                try {
-                    thumb.dataset.metrics = JSON.stringify(data.metrics || {});
-                    thumb.dataset.params = JSON.stringify(data.params || {});
-                } catch (e) {
-                    // 忽略序列化问题，不影响基本展示
-                }
-                thumb.addEventListener('click', () => {
-                    // 点击历史缩略图时，同时更新输入与输出
-                    inputImg.src = thumb.dataset.inputUrl;
-                    inputImg.style.display = 'block';
-                    resultImg.src = thumb.src;
-                    resultImg.style.display = 'block';
-                    previewContent.style.display = 'flex';
-                    placeholder.style.display = 'none';
-
-                    // 恢复对应的结果指标
+                const resp = await fetch('/enqueue', { method: 'POST', body: formData });
+                const enq = await resp.json();
+                if (!enq.success) throw new Error(enq.message || '入队失败');
+                const jobId = enq.job_id;
+                let handled = false;
+                let inFlight = false;
+                const timer = setInterval(async () => {
+                    if (handled || inFlight) return; // 保证每次只发起一个请求，且只处理一次结果
+                    inFlight = true;
                     try {
-                        const metrics = thumb.dataset.metrics ? JSON.parse(thumb.dataset.metrics) : null;
-                        if (metrics) {
-                            const count = Number(metrics['检测数量'] ?? metrics.count ?? '-');
-                            const area = Number(metrics['面积比例'] ?? metrics.area_ratio ?? 0);
-                            const conf = Number(metrics['平均置信度'] ?? metrics.avg_conf ?? 0);
-                            mCount.textContent = isNaN(count) ? '-' : String(count);
-                            mArea.textContent = isNaN(area) ? '-' : (area * 100).toFixed(2) + '%';
-                            mConf.textContent = isNaN(conf) ? '-' : conf.toFixed(3);
+                        const s = await fetch(`/jobs/${jobId}`);
+                        const jr = await s.json();
+                        if (!handled && jr.status === 'done' && jr.result && jr.result.success) {
+                            handled = true;
+                            clearInterval(timer);
+                            const outputSrc = 'data:image/png;base64,' + jr.result.image_base64;
+                            attachThumb(outputSrc, inputUrl, jr.result);
+                            done += 1; updateProgress();
+                            URL.revokeObjectURL(inputUrl);
+                        } else if (!handled && jr.status === 'error') {
+                            handled = true;
+                            clearInterval(timer);
+                            console.error(jr.message || '队列任务失败');
+                            alert('检测失败：' + (jr.message || '未知错误'));
+                            done += 1; updateProgress();
+                            URL.revokeObjectURL(inputUrl);
                         }
-                    } catch (e) { /* 忽略并继续 */ }
-
-                    // 恢复当时的检测参数到控制区（便于复现实验）
-                    try {
-                        const params = thumb.dataset.params ? JSON.parse(thumb.dataset.params) : null;
-                        if (params) {
-                            if (params.model && typeof params.model === 'string') {
-                                // 若模型选项存在该值则选中，否则保持当前
-                                for (let i = 0; i < modelSelect.options.length; i++) {
-                                    if (modelSelect.options[i].value === params.model) {
-                                        modelSelect.value = params.model;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (typeof params.conf !== 'undefined') document.getElementById('conf').value = params.conf;
-                            if (typeof params.iou !== 'undefined') document.getElementById('iou').value = params.iou;
-                            if (typeof params.imgsz !== 'undefined') document.getElementById('imgsz').value = params.imgsz;
-                            if (typeof params.max_det !== 'undefined') document.getElementById('max_det').value = params.max_det;
-                        }
-                    } catch (e) { /* 忽略并继续 */ }
-                });
-                thumbs.appendChild(thumb);
-
+                    } catch (e) {
+                        // 轮询异常不终止，继续等待下一次
+                    } finally {
+                        inFlight = false;
+                    }
+                }, 800);
             } catch (err) {
                 console.error(err);
-                alert('检测失败：' + err.message);
+                alert('入队或轮询失败：' + err.message);
+                done += 1; updateProgress();
+                URL.revokeObjectURL(inputUrl);
             }
-
-            done += 1;
-            const percent = Math.round(done / total * 100);
-            progressBar.style.width = percent + '%';
-            progressText.textContent = `已完成 ${done}/${total}（${percent}%）`;
         }
 
-        if (done === total) {
-            progressText.textContent = `检测完成，共 ${total} 张。`;
-        }
+        // 禁用开始按钮，避免重复点击导致重复入队
+        startBtn.disabled = true;
+        for (const f of files) enqueueAndPoll(f);
+        const enableTimer = setInterval(() => {
+            if (done === total) { startBtn.disabled = false; clearInterval(enableTimer); }
+        }, 500);
     });
 </script>
 </body>

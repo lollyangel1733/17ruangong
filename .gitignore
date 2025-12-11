@@ -28,8 +28,9 @@ datasets_preprocessed_v2/
 datasets_noRust/
 
 # Training outputs (Ultralytics runs) — keep only best.pt so frontend can load
-# Ignore all under runs
-runs/**/*
+# Ignore all files under runs, but allow directory traversal for whitelist rules
+runs/**
+!runs/**/
 # Re-include weights folders and best.pt files
 !runs/**/weights/
 !runs/**/weights/best.pt

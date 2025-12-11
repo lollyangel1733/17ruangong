@@ -5,6 +5,8 @@ import time
 import uuid
 import csv
 from typing import Dict, Tuple
+import threading
+import queue
 
 from flask import Flask, request, jsonify, render_template
 # 惰性导入YOLO，避免服务启动阶段因缺少依赖而失败
@@ -17,9 +19,13 @@ import cv2
 
 # Flask app
 app = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), 'templates'))
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 单请求最大50MB
 
 # Model cache to avoid reloading every request
 _loaded_models: Dict[str, object] = {}
+_jobs_lock = threading.Lock()
+_jobs: Dict[str, Dict] = {}
+_job_queue: "queue.Queue" = queue.Queue(maxsize=100)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_FILES = {
@@ -196,6 +202,141 @@ def _compute_stats(result, img_shape: Tuple[int, int]) -> Dict:
     }
 
 
+def _process_image_bytes(file_bytes: bytes, filename: str, model_key: str, conf: float, iou: float, imgsz: int, max_det: int):
+    # 解码
+    safe_name = os.path.basename(filename or '未命名图像')
+    nparr = np.frombuffer(file_bytes, np.uint8)
+    img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img_bgr is None:
+        raise RuntimeError('图像解码失败，文件格式可能不支持')
+    h, w = img_bgr.shape[:2]
+
+    # 模型
+    model = _get_model(model_key)
+
+    # 预测（Ultralytics使用RGB）
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    results = model.predict(source=img_rgb, conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, verbose=False)
+    if not results:
+        raise RuntimeError('模型未返回检测结果')
+    res = results[0]
+
+    # 可视化
+    annotated_rgb = res.plot()
+    annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
+    img_base64 = _encode_image_to_base64(annotated_bgr)
+
+    # 指标
+    stats = _compute_stats(res, (h, w))
+
+    # 保存到磁盘
+    ts = time.strftime('%Y%m%d-%H%M%S')
+    uid = uuid.uuid4().hex[:8]
+    name_no_ext, ext = os.path.splitext(safe_name)
+    saved_original = os.path.join(UPLOAD_DIR, f'{ts}_{uid}_{safe_name}')
+    with open(saved_original, 'wb') as f_out:
+        f_out.write(file_bytes)
+
+    def _model_dir_name(model_key: str) -> str:
+        key_norm = model_key.replace('\\', '/').strip()
+        rel = key_norm
+        try:
+            if os.path.isabs(model_key):
+                rel = os.path.relpath(model_key, BASE_DIR).replace('\\', '/')
+        except Exception:
+            pass
+        parts = rel.split('/')
+        if 'runs' in parts and rel.endswith('best.pt'):
+            try:
+                idx = parts.index('runs')
+                run_name = parts[idx + 1] if idx + 1 < len(parts) else None
+                if run_name:
+                    return run_name
+            except ValueError:
+                pass
+        stem = os.path.splitext(os.path.basename(rel))[0]
+        safe = ''.join(ch if ch.isalnum() or ch in ('-', '_', '.') else '_' for ch in stem)
+        return safe or 'model_outputs'
+
+    model_subdir = _model_dir_name(model_key)
+    per_model_output_dir = os.path.join(OUTPUT_DIR, model_subdir)
+    os.makedirs(per_model_output_dir, exist_ok=True)
+    saved_output = os.path.join(per_model_output_dir, f'{ts}_{uid}_{name_no_ext}_detected.png')
+    cv2.imwrite(saved_output, annotated_bgr)
+    rel_original = os.path.relpath(saved_original, BASE_DIR)
+    rel_output = os.path.relpath(saved_output, BASE_DIR)
+
+    # 写CSV
+    csv_path = os.path.join(WEB_DATA_DIR, 'results.csv')
+    write_header = not os.path.exists(csv_path)
+    try:
+        with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            if write_header:
+                writer.writerow([
+                    'timestamp', 'original_filename', 'saved_original_path', 'saved_output_path',
+                    'width', 'height', 'count', 'area_ratio', 'avg_conf',
+                    'model', 'conf', 'iou', 'imgsz', 'max_det'
+                ])
+            writer.writerow([
+                ts, safe_name, rel_original, rel_output,
+                w, h, stats['count'], stats['area_ratio'], stats['avg_conf'],
+                model_key, conf, iou, imgsz, max_det
+            ])
+    except Exception:
+        pass
+
+    return {
+        'success': True,
+        'filename': filename,
+        'image_base64': img_base64,
+        'metrics': {
+            '检测数量': stats['count'],
+            '面积比例': stats['area_ratio'],
+            '平均置信度': stats['avg_conf'],
+        },
+        'params': {
+            'model': model_key,
+            'conf': conf,
+            'iou': iou,
+            'imgsz': imgsz,
+            'max_det': max_det,
+        },
+        'saved': {
+            'original_path': rel_original,
+            'output_path': rel_output,
+        }
+    }
+
+
+def _queue_worker():
+    while True:
+        job = _job_queue.get()
+        if job is None:
+            _job_queue.task_done()
+            break
+        job_id = job['job_id']
+        with _jobs_lock:
+            _jobs[job_id] = {'status': 'running'}
+        try:
+            result = _process_image_bytes(
+                job['file_bytes'], job['filename'],
+                job['model'], job['conf'], job['iou'], job['imgsz'], job['max_det']
+            )
+            with _jobs_lock:
+                _jobs[job_id] = {'status': 'done', 'result': result}
+        except Exception as e:
+            with _jobs_lock:
+                _jobs[job_id] = {'status': 'error', 'message': str(e)}
+        finally:
+            _job_queue.task_done()
+
+
+# 启动后台worker线程
+_worker_thread = threading.Thread(target=_queue_worker, daemon=True)
+_worker_thread.start()
+
+
 @app.route('/', methods=['GET'])
 def index():
     return render_template('index.html')
@@ -239,15 +380,7 @@ def detect():
             return jsonify({'success': False, 'message': '未收到文件，请选择要检测的图像'}), 400
         file = request.files['file']
         filename = file.filename or '未命名图像'
-        safe_name = os.path.basename(filename)
-
-        # Read image bytes and decode as BGR
         file_bytes = file.read()
-        nparr = np.frombuffer(file_bytes, np.uint8)
-        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img_bgr is None:
-            return jsonify({'success': False, 'message': '图像解码失败，文件格式可能不支持'}), 400
-        h, w = img_bgr.shape[:2]
 
         # Params
         model_key = request.form.get('model', 'yolo11s.pt')
@@ -256,87 +389,59 @@ def detect():
         imgsz = int(request.form.get('imgsz', 640))
         max_det = int(request.form.get('max_det', 300))
 
-        # Load model
-        model = _get_model(model_key)
-
-        # Predict (Ultralytics expects RGB by default; we convert to RGB for safety)
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        results = model.predict(source=img_rgb, conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, verbose=False)
-        if not results:
-            return jsonify({'success': False, 'message': '模型未返回检测结果'}), 500
-        res = results[0]
-
-        # Plot annotated image (returns RGB), convert back to BGR for encoding
-        annotated_rgb = res.plot()
-        annotated_bgr = cv2.cvtColor(annotated_rgb, cv2.COLOR_RGB2BGR)
-        img_base64 = _encode_image_to_base64(annotated_bgr)
-
-        # Compute stats
-        stats = _compute_stats(res, (h, w))
-
-        # -------------------- Save to disk --------------------
-        ts = time.strftime('%Y%m%d-%H%M%S')
-        uid = uuid.uuid4().hex[:8]
-        name_no_ext, ext = os.path.splitext(safe_name)
-        # Save original (use raw bytes to preserve format)
-        saved_original = os.path.join(UPLOAD_DIR, f'{ts}_{uid}_{safe_name}')
-        with open(saved_original, 'wb') as f_out:
-            f_out.write(file_bytes)
-        # Save annotated as PNG into per-model subfolder
-        model_subdir = _model_dir_name(model_key)
-        per_model_output_dir = os.path.join(OUTPUT_DIR, model_subdir)
-        os.makedirs(per_model_output_dir, exist_ok=True)
-        saved_output = os.path.join(per_model_output_dir, f'{ts}_{uid}_{name_no_ext}_detected.png')
-        cv2.imwrite(saved_output, annotated_bgr)
-        rel_original = os.path.relpath(saved_original, BASE_DIR)
-        rel_output = os.path.relpath(saved_output, BASE_DIR)
-
-        # Append CSV
-        csv_path = os.path.join(WEB_DATA_DIR, 'results.csv')
-        write_header = not os.path.exists(csv_path)
-        try:
-            with open(csv_path, 'a', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                if write_header:
-                    writer.writerow([
-                        'timestamp', 'original_filename', 'saved_original_path', 'saved_output_path',
-                        'width', 'height', 'count', 'area_ratio', 'avg_conf',
-                        'model', 'conf', 'iou', 'imgsz', 'max_det'
-                    ])
-                writer.writerow([
-                    ts, safe_name, rel_original, rel_output,
-                    w, h, stats['count'], stats['area_ratio'], stats['avg_conf'],
-                    model_key, conf, iou, imgsz, max_det
-                ])
-        except Exception:
-            pass
-        # -----------------------------------------------------
-
-        return jsonify({
-            'success': True,
-            'filename': filename,
-            'image_base64': img_base64,
-            'metrics': {
-                '检测数量': stats['count'],
-                '面积比例': stats['area_ratio'],
-                '平均置信度': stats['avg_conf'],
-            },
-            'params': {
-                'model': model_key,
-                'conf': conf,
-                'iou': iou,
-                'imgsz': imgsz,
-                'max_det': max_det,
-            },
-            'saved': {
-                'original_path': rel_original,
-                'output_path': rel_output,
-            }
-        })
+        result = _process_image_bytes(file_bytes, filename, model_key, conf, iou, imgsz, max_det)
+        return jsonify(result)
     except FileNotFoundError as e:
         return jsonify({'success': False, 'message': str(e)}), 400
     except Exception as e:
         return jsonify({'success': False, 'message': f'检测失败: {str(e)}'}), 500
+
+
+@app.route('/enqueue', methods=['POST'])
+def enqueue():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': '未收到文件，请选择要检测的图像'}), 400
+        file = request.files['file']
+        filename = file.filename or '未命名图像'
+        file_bytes = file.read()
+
+        model_key = request.form.get('model', 'yolo11s.pt')
+        conf = float(request.form.get('conf', 0.25))
+        iou = float(request.form.get('iou', 0.45))
+        imgsz = int(request.form.get('imgsz', 640))
+        max_det = int(request.form.get('max_det', 300))
+
+        job_id = uuid.uuid4().hex
+        with _jobs_lock:
+            _jobs[job_id] = {'status': 'queued'}
+        _job_queue.put({
+            'job_id': job_id,
+            'file_bytes': file_bytes,
+            'filename': filename,
+            'model': model_key,
+            'conf': conf,
+            'iou': iou,
+            'imgsz': imgsz,
+            'max_det': max_det,
+        })
+        return jsonify({'success': True, 'job_id': job_id})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'入队失败: {str(e)}'}), 500
+
+
+@app.route('/jobs/<job_id>', methods=['GET'])
+def job_status(job_id: str):
+    with _jobs_lock:
+        info = _jobs.get(job_id)
+    if not info:
+        return jsonify({'success': False, 'status': 'not_found'}), 404
+    if info.get('status') == 'done':
+        return jsonify({'success': True, 'status': 'done', 'result': info.get('result')})
+    elif info.get('status') == 'error':
+        return jsonify({'success': False, 'status': 'error', 'message': info.get('message', '未知错误')}), 500
+    else:
+        return jsonify({'success': True, 'status': info.get('status', 'queued')})
 
 
 if __name__ == '__main__':
