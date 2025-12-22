@@ -72,8 +72,9 @@
           <p class="card-sub">输入/输出对比与统计指标。</p>
         </div>
         <div class="link-row">
-          <button class="ghost-btn" @click="goTasks">任务队列</button>
-          <button class="ghost-btn" @click="goLogs">日志</button>
+          <button type="button" class="ghost-btn" @click="handleExport" :disabled="!gallery.length">导出报告</button>
+          <button type="button" class="ghost-btn" @click="goTasks">任务队列</button>
+          <button type="button" class="ghost-btn" @click="goLogs">日志</button>
         </div>
       </div>
       <div class="preview-pair">
@@ -107,14 +108,17 @@
     <div class="page-card" style="background: var(--card);">
       <h3 class="card-title">数据分析</h3>
       <p class="card-sub">基于当前检测结果的统计图表。</p>
-      <CorrosionDetectionCorrosionCharts />
+      <CorrosionDetectionCorrosionCharts ref="chartsRef" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useCorrosion } from '~/composables/useCorrosion'
+import { generatePDFReport } from '~/utils/pdfExport'
+
+const chartsRef = ref<any>(null)
 
 const {
   models,
@@ -136,6 +140,15 @@ const {
 const router = useRouter()
 const goTasks = () => router.push('/corrosion/tasks')
 const goLogs = () => router.push('/corrosion/logs')
+
+const handleExport = async () => {
+  if (!gallery.value.length) return
+  let chartImages = undefined
+  if (gallery.value.length > 1 && chartsRef.value) {
+    chartImages = chartsRef.value.getChartImages()
+  }
+  await generatePDFReport(gallery.value, chartImages)
+}
 
 const onFilesChange = (e: Event) => {
   const input = e.target as HTMLInputElement

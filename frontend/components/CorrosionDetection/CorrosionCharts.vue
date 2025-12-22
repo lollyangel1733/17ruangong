@@ -3,14 +3,14 @@
     <div class="chart-card">
       <h4>锈蚀严重程度分布 (饼图)</h4>
       <div class="chart-wrapper">
-        <Pie v-if="gallery.length" :data="pieData" :options="pieOptions" />
+        <Pie ref="pieChartRef" v-if="gallery.length" :data="pieData" :options="pieOptions" />
         <div v-else class="no-data">暂无数据</div>
       </div>
     </div>
     <div class="chart-card">
       <h4>重点关注目标排行 (Top 10)</h4>
       <div class="chart-wrapper">
-        <Bar v-if="gallery.length" :data="barData" :options="barOptions" />
+        <Bar ref="barChartRef" v-if="gallery.length" :data="barData" :options="barOptions" />
         <div v-else class="no-data">暂无数据</div>
       </div>
     </div>
@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   Chart as ChartJS,
   Title,
@@ -35,6 +35,17 @@ import { useCorrosion } from '~/composables/useCorrosion'
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement)
 
 const { gallery } = useCorrosion()
+const pieChartRef = ref<any>(null)
+const barChartRef = ref<any>(null)
+
+defineExpose({
+  getChartImages: () => {
+    return {
+      pie: pieChartRef.value?.chart?.toBase64Image(),
+      bar: barChartRef.value?.chart?.toBase64Image()
+    }
+  }
+})
 
 // 1. 饼图数据：锈蚀严重程度分布
 const pieData = computed(() => {
