@@ -103,6 +103,12 @@
         <div class="placeholder-box">输入尺寸/最大检测数: {{ lastParams.imgsz }} / {{ lastParams.max_det }}</div>
       </div>
     </div>
+
+    <div class="page-card" style="background: var(--card);">
+      <h3 class="card-title">数据分析</h3>
+      <p class="card-sub">基于当前检测结果的统计图表。</p>
+      <CorrosionDetectionCorrosionCharts />
+    </div>
   </div>
 </template>
 

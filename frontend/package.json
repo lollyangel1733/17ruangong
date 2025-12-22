@@ -10,8 +10,10 @@
     "lint": "echo \"Add your linter (eslint/stylelint) here\""
   },
   "dependencies": {
+    "chart.js": "^4.5.1",
     "nuxt": "3.11.1",
-    "vue": "^3.4.21"
+    "vue": "^3.4.21",
+    "vue-chartjs": "^5.3.3"
   },
   "devDependencies": {
     "@types/node": "20.14.2",
