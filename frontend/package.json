@@ -1,0 +1,21 @@
+{
+  "name": "metal-curtain-wall-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxi dev",
+    "build": "nuxi build",
+    "preview": "nuxi preview",
+    "lint": "echo \"Add your linter (eslint/stylelint) here\""
+  },
+  "dependencies": {
+    "nuxt": "3.11.1",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.2",
+    "nuxi": "3.11.1",
+    "typescript": "5.4.5"
+  }
+}

@@ -16,6 +16,13 @@ venv/
 *.log
 *.tmp
 
+# Frontend build artifacts
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/.turbo/
+frontend/.vercel/
+
 # Project artifacts and outputs (avoid committing generated files)
 web_data/outputs/
 web_data/uploads/

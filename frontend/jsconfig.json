@@ -1,0 +1,7 @@
+{
+  "include": ["./**/*"],
+  "exclude": ["node_modules", "dist"],
+  "vueCompilerOptions": {
+    "types": [".nuxt/nuxt.d.ts"]
+  }
+}
