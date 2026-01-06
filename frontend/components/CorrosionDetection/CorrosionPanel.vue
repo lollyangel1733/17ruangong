@@ -4,121 +4,148 @@
 -->
 <template>
   <div class="stack">
-    <div class="top-row">
+    <template v-if="viewMode === 'performance'">
       <div class="page-card" style="background: var(--card);">
-        <h3 class="card-title">上传</h3>
-        <p class="card-sub">选择图片并开始检测，支持多张顺序处理。</p>
-        <div class="upload-panel">
-          <div class="upload-actions">
-            <label class="btn">
-              <input type="file" accept="image/*" multiple hidden @change="onFilesChange" />
-              选择图像
-            </label>
-            <div class="progress-text">{{ progressText }}</div>
-            <div class="action-row">
-              <button class="btn" :disabled="busy || !files.length" @click="startDetect">同步检测</button>
-              <button class="btn secondary" :disabled="busy || !files.length" @click="startQueue">队列检测</button>
-              <button class="ghost-btn" @click="goTasks">任务队列</button>
-              <button class="ghost-btn" @click="goLogs">日志</button>
-              <span v-if="busy" class="muted">处理中...</span>
+        <h3 class="card-title">多模型性能对比</h3>
+        <p class="card-sub">依据离线评测结果显示，便于挑选最佳模型。</p>
+        <CorrosionDetectionModelCompare />
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="top-row">
+        <div class="page-card" style="background: var(--card);">
+          <h3 class="card-title">上传</h3>
+          <p class="card-sub">选择图片并开始检测，支持多张顺序处理。</p>
+          <div class="upload-panel">
+            <div class="upload-actions">
+              <label class="btn">
+                <input type="file" accept="image/*" multiple hidden @change="onFilesChange" />
+                选择图像
+              </label>
+              <div class="progress-text">{{ progressText }}</div>
+              <div class="action-row">
+                <button class="btn" :disabled="busy || !files.length" @click="startDetect">同步检测</button>
+                <button class="btn secondary" :disabled="busy || !files.length" @click="startQueue">队列检测</button>
+                <button class="ghost-btn" @click="goTasks">任务队列</button>
+                <button class="ghost-btn" @click="goLogs">日志</button>
+                <span v-if="busy" class="muted">处理中...</span>
+              </div>
+            </div>
+            <div class="thumb-row" v-if="visibleGallery.length || inputPreviewSrc">
+              <div class="thumb current" :class="{ active: !visibleGallery.length }" v-if="inputPreviewSrc">
+                <img :src="inputPreviewSrc" alt="输入预览" />
+                <div class="thumb-label">当前输入</div>
+              </div>
+              <div v-for="item in visibleGallery" :key="item.id" class="thumb" @click="selectThumb(item)">
+                <img :src="item.output" :alt="item.filename" />
+                <div class="thumb-label">{{ item.filename }}</div>
+              </div>
             </div>
           </div>
-          <div class="thumb-row" v-if="gallery.length || inputPreviewSrc">
-            <div class="thumb current" :class="{ active: !gallery.length }" v-if="inputPreviewSrc">
-              <img :src="inputPreviewSrc" alt="输入预览" />
-              <div class="thumb-label">当前输入</div>
+        </div>
+        <div class="page-card" style="background: var(--card);">
+          <h3 class="card-title">参数</h3>
+          <p class="card-sub">选择模型与阈值。</p>
+          <div class="param-grid">
+            <div class="param-block full">
+              <div class="param-label">模型</div>
+              <select v-model="params.model" class="param-input">
+                <option v-for="m in models" :key="m.key" :value="m.key">{{ m.name }}</option>
+              </select>
             </div>
-            <div v-for="item in gallery" :key="item.id" class="thumb" @click="selectThumb(item)">
-              <img :src="item.output" :alt="item.filename" />
-              <div class="thumb-label">{{ item.filename }}</div>
+            <div class="param-block">
+              <div class="param-label">置信度 (conf)</div>
+              <input v-model.number="params.conf" type="number" min="0" max="1" step="0.01" class="param-input" />
+            </div>
+            <div class="param-block">
+              <div class="param-label">IOU 阈值 (iou)</div>
+              <input v-model.number="params.iou" type="number" min="0" max="1" step="0.01" class="param-input" />
+            </div>
+            <div class="param-block">
+              <div class="param-label">输入尺寸 (imgsz)</div>
+              <input v-model.number="params.imgsz" type="number" min="320" max="1536" step="32" class="param-input" />
+            </div>
+            <div class="param-block">
+              <div class="param-label">最大检测数 (max_det)</div>
+              <input v-model.number="params.max_det" type="number" min="1" max="1000" step="1" class="param-input" />
             </div>
           </div>
         </div>
       </div>
+
       <div class="page-card" style="background: var(--card);">
-        <h3 class="card-title">参数</h3>
-        <p class="card-sub">选择模型与阈值。</p>
-        <div class="param-grid">
-          <div class="param-block full">
-            <div class="param-label">模型</div>
-            <select v-model="params.model" class="param-input">
-              <option v-for="m in models" :key="m.key" :value="m.key">{{ m.name }}</option>
-            </select>
+        <div class="results-header">
+          <div>
+            <h3 class="card-title">结果预览</h3>
+            <p class="card-sub">输入/输出对比与统计指标。</p>
           </div>
-          <div class="param-block">
-            <div class="param-label">置信度 (conf)</div>
-            <input v-model.number="params.conf" type="number" min="0" max="1" step="0.01" class="param-input" />
-          </div>
-          <div class="param-block">
-            <div class="param-label">IOU 阈值 (iou)</div>
-            <input v-model.number="params.iou" type="number" min="0" max="1" step="0.01" class="param-input" />
-          </div>
-          <div class="param-block">
-            <div class="param-label">输入尺寸 (imgsz)</div>
-            <input v-model.number="params.imgsz" type="number" min="320" max="1536" step="32" class="param-input" />
-          </div>
-          <div class="param-block">
-            <div class="param-label">最大检测数 (max_det)</div>
-            <input v-model.number="params.max_det" type="number" min="1" max="1000" step="1" class="param-input" />
+          <div class="link-row">
+            <button type="button" class="ghost-btn" @click="handleExport" :disabled="!visibleGallery.length">导出报告</button>
+            <button type="button" class="ghost-btn" @click="goTasks">任务队列</button>
+            <button type="button" class="ghost-btn" @click="goLogs">日志</button>
           </div>
         </div>
+        <div class="preview-pair">
+          <div class="preview-box">
+            <div class="preview-title">输入图</div>
+            <div class="preview-content">
+              <img v-if="inputPreviewSrc" :src="inputPreviewSrc" alt="输入图" />
+              <div v-else class="placeholder-box">等待选择图片</div>
+            </div>
+          </div>
+          <div class="preview-box">
+            <div class="preview-title">输出（标注结果）</div>
+            <div class="preview-content">
+              <img v-if="previewSrc" :src="previewSrc" alt="检测结果" />
+              <div v-else class="placeholder-box">等待检测结果</div>
+            </div>
+          </div>
+        </div>
+        <div class="metrics-row">
+          <div class="placeholder-box">检测数量: {{ metrics.count ?? '-' }}</div>
+          <div class="placeholder-box">面积比例: {{ formatRatio(metrics.area_ratio) }}</div>
+          <div class="placeholder-box">平均置信度: {{ formatConf(metrics.avg_conf) }}</div>
+        </div>
+        <div class="metrics-row">
+          <div class="placeholder-box">模型: {{ lastParams.model }}</div>
+          <div class="placeholder-box">置信度/IOU: {{ lastParams.conf }} / {{ lastParams.iou }}</div>
+          <div class="placeholder-box">输入尺寸/最大检测数: {{ lastParams.imgsz }} / {{ lastParams.max_det }}</div>
+        </div>
       </div>
-    </div>
 
-    <div class="page-card" style="background: var(--card);">
-      <div class="results-header">
-        <div>
-          <h3 class="card-title">结果预览</h3>
-          <p class="card-sub">输入/输出对比与统计指标。</p>
-        </div>
-        <div class="link-row">
-          <button type="button" class="ghost-btn" @click="handleExport" :disabled="!gallery.length">导出报告</button>
-          <button type="button" class="ghost-btn" @click="goTasks">任务队列</button>
-          <button type="button" class="ghost-btn" @click="goLogs">日志</button>
-        </div>
+      <div
+        v-if="visibleGallery.length > 1"
+        class="page-card"
+        style="background: var(--card);"
+      >
+        <h3 class="card-title">数据分析</h3>
+        <p class="card-sub">基于当前检测结果的统计图表。</p>
+        <CorrosionDetectionCorrosionCharts
+          ref="chartsRef"
+          :items="visibleGallery"
+        />
       </div>
-      <div class="preview-pair">
-        <div class="preview-box">
-          <div class="preview-title">输入图</div>
-          <div class="preview-content">
-            <img v-if="inputPreviewSrc" :src="inputPreviewSrc" alt="输入图" />
-            <div v-else class="placeholder-box">等待选择图片</div>
-          </div>
-        </div>
-        <div class="preview-box">
-          <div class="preview-title">输出（标注结果）</div>
-          <div class="preview-content">
-            <img v-if="previewSrc" :src="previewSrc" alt="检测结果" />
-            <div v-else class="placeholder-box">等待检测结果</div>
-          </div>
-        </div>
-      </div>
-      <div class="metrics-row">
-        <div class="placeholder-box">检测数量: {{ metrics.count ?? '-' }}</div>
-        <div class="placeholder-box">面积比例: {{ formatRatio(metrics.area_ratio) }}</div>
-        <div class="placeholder-box">平均置信度: {{ formatConf(metrics.avg_conf) }}</div>
-      </div>
-      <div class="metrics-row">
-        <div class="placeholder-box">模型: {{ lastParams.model }}</div>
-        <div class="placeholder-box">置信度/IOU: {{ lastParams.conf }} / {{ lastParams.iou }}</div>
-        <div class="placeholder-box">输入尺寸/最大检测数: {{ lastParams.imgsz }} / {{ lastParams.max_det }}</div>
-      </div>
-    </div>
-
-    <div class="page-card" style="background: var(--card);">
-      <h3 class="card-title">数据分析</h3>
-      <p class="card-sub">基于当前检测结果的统计图表。</p>
-      <CorrosionDetectionCorrosionCharts ref="chartsRef" />
-    </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import { useCorrosion } from '~/composables/useCorrosion'
 import { generatePDFReport } from '~/utils/pdfExport'
 
 const chartsRef = ref<any>(null)
+const props = defineProps<{ viewMode?: 'performance' | 'detect' }>()
+const emit = defineEmits<{ (e: 'update:viewMode', v: 'performance' | 'detect'): void }>()
+const internalView = ref<'performance' | 'detect'>(props.viewMode || 'performance')
+const viewMode = computed({
+  get: () => props.viewMode ?? internalView.value,
+  set: (v: 'performance' | 'detect') => {
+    internalView.value = v
+    emit('update:viewMode', v)
+  }
+})
 
 const {
   models,
@@ -134,7 +161,8 @@ const {
   progressText,
   gallery,
   startDetect,
-  startQueue
+  startQueue,
+  currentBatchId
 } = useCorrosion()
 
 const router = useRouter()
@@ -142,12 +170,12 @@ const goTasks = () => router.push('/corrosion/tasks')
 const goLogs = () => router.push('/corrosion/logs')
 
 const handleExport = async () => {
-  if (!gallery.value.length) return
+  if (!visibleGallery.value.length) return
   let chartImages = undefined
-  if (gallery.value.length > 1 && chartsRef.value) {
+  if (visibleGallery.value.length > 1 && chartsRef.value) {
     chartImages = chartsRef.value.getChartImages()
   }
-  await generatePDFReport(gallery.value, chartImages)
+  await generatePDFReport(visibleGallery.value, chartImages)
 }
 
 const onFilesChange = (e: Event) => {
@@ -161,12 +189,27 @@ onMounted(() => {
   fetchModels()
 })
 
+const latestBatchId = computed(() => {
+  if (currentBatchId.value) return currentBatchId.value
+  const first = gallery.value[0]
+  if (first?.batchId) return first.batchId
+  return gallery.value.length ? '__legacy__' : ''
+})
+
+const visibleGallery = computed(() => {
+  const bid = latestBatchId.value
+  if (!bid) return []
+  if (bid === '__legacy__') return gallery.value
+  return gallery.value.filter((g) => g.batchId === bid)
+})
+
 const selectThumb = (item: typeof gallery.value[number]) => {
   if (!item) return
   previewSrc.value = item.output
   inputPreviewSrc.value = item.input
   metrics.value = item.metrics
   lastParams.value = item.params
+  if (item.batchId) currentBatchId.value = item.batchId
 }
 
 const formatRatio = (v?: number) => (typeof v === 'number' ? `${(v * 100).toFixed(2)}%` : '-')

@@ -30,6 +30,9 @@ interface TaskItem {
   status: 'pending' | 'running' | 'done' | 'error'
   message?: string
   metrics?: DetectionMetrics
+  batchId?: string
+  model?: string
+  batchOrder?: number
 }
 
 export function useCorrosion() {
@@ -41,11 +44,13 @@ export function useCorrosion() {
   const previewSrc = useState<string>('corrosion-preview', () => '')
   const inputPreviewSrc = useState<string>('corrosion-input-preview', () => '')
   const progressText = useState<string>('corrosion-progress', () => '未开始')
-  const gallery = useState<Array<{ id: string; input: string; output: string; metrics: DetectionMetrics; params: DetectParams; filename: string }>>('corrosion-gallery', () => [])
+  const gallery = useState<Array<{ id: string; input: string; output: string; metrics: DetectionMetrics; params: DetectParams; filename: string; batchId?: string; batchOrder?: number }>>('corrosion-gallery', () => [])
   const tasks = useState<TaskItem[]>('corrosion-tasks', () => [])
   const logs = useState<string[]>('corrosion-logs', () => [])
   const params = useState<DetectParams>('corrosion-params', () => ({ model: 'yolo11s.pt', conf: 0.25, iou: 0.45, imgsz: 640, max_det: 300 }))
   const lastParams = useState<DetectParams>('corrosion-last-params', () => ({ ...params.value }))
+  const batchSeq = useState<number>('corrosion-batch-seq', () => 0)
+  const currentBatchId = useState<string>('corrosion-current-batch', () => '')
 
   const pushLog = (msg: string) => {
     const line = `${new Date().toLocaleTimeString()} - ${msg}`
@@ -78,9 +83,8 @@ export function useCorrosion() {
 
   const setFiles = (list: File[]) => {
     files.value = list
-    gallery.value = []
-    tasks.value = []
     progressText.value = list.length ? `已选择 ${list.length} 张图片` : '未开始'
+    currentBatchId.value = ''
     if (list.length) {
       inputPreviewSrc.value = URL.createObjectURL(list[0])
     } else {
@@ -88,16 +92,16 @@ export function useCorrosion() {
     }
   }
 
-  const handleResult = (data: any, inputUrl: string, filename: string, taskId?: string) => {
+  const handleResult = (data: any, inputUrl: string, filename: string, taskId?: string, batchId?: string) => {
     if (!data) return
     const outputUrl = data.image_base64 ? `data:image/png;base64,${data.image_base64}` : ''
     previewSrc.value = outputUrl
     inputPreviewSrc.value = inputUrl
     const m = data.metrics || {}
     const met: DetectionMetrics = {
-      count: m['检测数量'] ?? m.count,
+      count: m['检测数量'] ?? m.count ?? m.box_count,
       area_ratio: m['面积比例'] ?? m.area_ratio,
-      avg_conf: m['平均置信度'] ?? m.avg_conf
+      avg_conf: m['平均置信度'] ?? m.avg_conf ?? m.max_conf
     }
     metrics.value = met
     const p: DetectParams = {
@@ -117,12 +121,15 @@ export function useCorrosion() {
     if ((met.count ?? 0) === 0) {
       progressText.value = '模型未检出目标（count=0），可尝试降低 conf 或换权重'
     }
+    let batchOrder: number | undefined
     if (taskId) {
       const t = tasks.value.find((x: TaskItem) => x.id === taskId)
       if (t) {
         t.status = 'done'
         t.metrics = met
         t.message = '完成'
+        if (!batchId) batchId = t.batchId
+        batchOrder = t.batchOrder
       }
     }
     pushLog(`检测成功: ${filename}, count=${met.count ?? '-'}, model=${p.model}`)
@@ -132,7 +139,9 @@ export function useCorrosion() {
       output: outputUrl,
       metrics: met,
       params: p,
-      filename
+      filename,
+      batchId,
+      batchOrder
     })
   }
 
@@ -141,11 +150,15 @@ export function useCorrosion() {
     busy.value = true
     progressText.value = '检测中...'
     try {
+      const batchId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      batchSeq.value += 1
+      const batchOrder = batchSeq.value
+      currentBatchId.value = batchId
       let done = 0
       for (const file of files.value) {
         const inputUrl = URL.createObjectURL(file)
         const taskId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-        tasks.value.unshift({ id: taskId, filename: file.name, mode: 'sync', status: 'running' })
+        tasks.value.unshift({ id: taskId, filename: file.name, mode: 'sync', status: 'running', batchId, model: params.value.model, batchOrder })
         const form = new FormData()
         form.append('file', file)
         form.append('model', params.value.model)
@@ -160,7 +173,7 @@ export function useCorrosion() {
             body: form
           })
           if (res?.success) {
-            handleResult(res, inputUrl, file.name, taskId)
+            handleResult(res, inputUrl, file.name, taskId, batchId)
           } else {
             console.error('检测失败', res)
             progressText.value = res?.message || '检测失败'
@@ -195,12 +208,16 @@ export function useCorrosion() {
     busy.value = true
     try {
       progressText.value = '检测中...'
+      const batchId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      batchSeq.value += 1
+      const batchOrder = batchSeq.value
+      currentBatchId.value = batchId
       let done = 0
       for (const file of files.value) {
         const inputUrl = URL.createObjectURL(file)
         inputPreviewSrc.value = inputUrl
         const taskId = `${Date.now()}-${Math.random().toString(16).slice(2)}`
-        tasks.value.unshift({ id: taskId, filename: file.name, mode: 'queue', status: 'running' })
+        tasks.value.unshift({ id: taskId, filename: file.name, mode: 'queue', status: 'running', batchId, model: params.value.model, batchOrder })
 
         const form = new FormData()
         form.append('file', file)
@@ -236,7 +253,7 @@ export function useCorrosion() {
         const poll = async (): Promise<void> => {
           const jr = await $fetch<any>(`/api/corrosion/jobs/${jobId}`)
           if (jr?.status === 'done' && jr.result?.success) {
-            handleResult(jr.result, inputUrl, file.name, taskId)
+            handleResult(jr.result, inputUrl, file.name, taskId, batchId)
             pushLog(`队列完成: ${file.name}`)
             return
           }
@@ -274,6 +291,7 @@ export function useCorrosion() {
     gallery,
     tasks,
     logs,
+    currentBatchId,
     fetchModels,
     setFiles,
     startDetect,

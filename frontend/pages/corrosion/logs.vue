@@ -6,7 +6,7 @@
         <p class="card-sub">追踪检测流程的详细运行日志。</p>
       </div>
       <div class="link-row">
-        <NuxtLink class="text-link" to="/corrosion">返回检测</NuxtLink>
+        <NuxtLink class="text-link" :to="{ path: '/corrosion', query: { view: 'detect' } }">返回检测</NuxtLink>
         <NuxtLink class="text-link" to="/corrosion/tasks">查看任务队列</NuxtLink>
       </div>
     </div>

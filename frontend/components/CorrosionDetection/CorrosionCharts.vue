@@ -1,16 +1,16 @@
 <template>
-  <div class="charts-container">
+  <div v-if="hasMulti" class="charts-container">
     <div class="chart-card">
-      <h4>锈蚀严重程度分布 (饼图)</h4>
+      <h4>锈蚀面积占比分布（当前批次）</h4>
       <div class="chart-wrapper">
-        <Pie ref="pieChartRef" v-if="gallery.length" :data="pieData" :options="pieOptions" />
+        <Pie ref="pieChartRef" v-if="items.length" :data="pieData" :options="pieOptions" />
         <div v-else class="no-data">暂无数据</div>
       </div>
     </div>
     <div class="chart-card">
-      <h4>重点关注目标排行 (Top 10)</h4>
+      <h4>锈蚀面积 Top 10 文件</h4>
       <div class="chart-wrapper">
-        <Bar ref="barChartRef" v-if="gallery.length" :data="barData" :options="barOptions" />
+        <Bar ref="barChartRef" v-if="items.length" :data="barData" :options="barOptions" />
         <div v-else class="no-data">暂无数据</div>
       </div>
     </div>
@@ -29,14 +29,20 @@ import {
   LinearScale,
   ArcElement
 } from 'chart.js'
+import type { ChartOptions } from 'chart.js'
 import { Bar, Pie } from 'vue-chartjs'
-import { useCorrosion } from '~/composables/useCorrosion'
+
+type ChartItem = { filename: string; metrics?: { area_ratio?: number } }
+
+const props = defineProps<{ items: ChartItem[] }>()
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement)
 
-const { gallery } = useCorrosion()
 const pieChartRef = ref<any>(null)
 const barChartRef = ref<any>(null)
+
+const items = computed(() => props.items || [])
+const hasMulti = computed(() => items.value.length > 1)
 
 defineExpose({
   getChartImages: () => {
@@ -50,7 +56,7 @@ defineExpose({
 // 1. 饼图数据：锈蚀严重程度分布
 const pieData = computed(() => {
   let low = 0, mid = 0, high = 0
-  gallery.value.forEach(item => {
+  items.value.forEach(item => {
     const ratio = item.metrics?.area_ratio || 0
     if (ratio < 0.001) low++
     else if (ratio < 0.01) mid++
@@ -81,15 +87,15 @@ const pieOptions = {
 // 2. 柱状图数据：重点关注目标排行
 const barData = computed(() => {
   // 按面积比例降序排序，取前10
-  const sorted = [...gallery.value]
+  const sorted = [...items.value]
     .sort((a, b) => (b.metrics?.area_ratio || 0) - (a.metrics?.area_ratio || 0))
     .slice(0, 10)
 
   return {
-    labels: sorted.map(item => item.filename.length > 10 ? item.filename.slice(0, 10) + '...' : item.filename),
+    labels: sorted.map(item => item.filename.length > 14 ? item.filename.slice(0, 14) + '...' : item.filename),
     datasets: [
       {
-        label: '锈蚀面积比例',
+        label: '面积比例（0-1）',
         backgroundColor: '#3b82f6',
         data: sorted.map(item => item.metrics?.area_ratio || 0)
       }
@@ -97,12 +103,13 @@ const barData = computed(() => {
   }
 })
 
-const barOptions = {
+const barOptions: ChartOptions<'bar'> = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      display: false
+      display: true,
+      position: 'bottom'
     }
   },
   scales: {
@@ -111,6 +118,12 @@ const barOptions = {
       title: {
         display: true,
         text: '面积比例 (0-1)'
+      }
+    },
+    x: {
+      title: {
+        display: true,
+        text: '文件（按面积比例降序）'
       }
     }
   }
